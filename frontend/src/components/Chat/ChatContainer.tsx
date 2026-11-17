@@ -214,11 +214,15 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
       onError: (err) => {
         console.error('Streaming failed:', err);
         setIsStreaming(false);
+        const errStr = String(err?.message || err || '');
+        let fallbackMsg = 'Sorry, I encountered an issue connecting to the financial engine. Please check your network and try again.';
+        if (errStr.includes('Failed to fetch') || errStr.includes('NetworkError') || errStr.includes('Load failed')) {
+          fallbackMsg = '⚠️ **Backend Connection Issue**: Could not connect to the FinSta API server. If deployed on Vercel, please check that your backend service on Render/Railway is running and configured under `VITE_API_URL`, or that the Vercel API function is deployed.';
+        }
         setMessages((prev) => {
           const updated = [...prev];
           if (updated[assistantMessageIndex]) {
-            updated[assistantMessageIndex].content =
-              assistantText || 'Sorry, I encountered an issue processing your request. Please try again.';
+            updated[assistantMessageIndex].content = assistantText || fallbackMsg;
           }
           return updated;
         });
