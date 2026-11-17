@@ -1,6 +1,8 @@
 import { UserProfile, ChatSession, Message, ToolCallExecution } from '../types';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api`
+  : 'http://localhost:8000/api';
 
 export const api = {
   // Chat Streaming via SSE
