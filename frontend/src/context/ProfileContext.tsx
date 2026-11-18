@@ -41,7 +41,13 @@ const ProfileContext = createContext<ProfileContextType>({
 });
 
 export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [profile, setProfile] = useState<UserProfile>(defaultProfile);
+  const [profile, setProfile] = useState<UserProfile>(() => {
+    try {
+      const cached = localStorage.getItem('finsta_user_profile');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return defaultProfile;
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -50,6 +56,7 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const data = await api.getProfile();
         if (data && data.currency) {
           setProfile(data);
+          localStorage.setItem('finsta_user_profile', JSON.stringify(data));
         }
       } catch (err) {
         console.warn('Could not load profile from backend, using local defaults.');
@@ -63,6 +70,7 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const setCurrency = async (currency: CurrencyCode) => {
     const updated = { ...profile, currency };
     setProfile(updated);
+    localStorage.setItem('finsta_user_profile', JSON.stringify(updated));
     try {
       await api.updateProfile(updated);
     } catch (e) {
@@ -72,22 +80,28 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const updateProfile = async (updated: UserProfile) => {
     setProfile(updated);
+    localStorage.setItem('finsta_user_profile', JSON.stringify(updated));
     try {
       await api.updateProfile(updated);
     } catch (e) {
       console.error('Failed to update profile:', e);
+      throw e;
     }
   };
 
   const clearAllData = async () => {
     try {
       await api.clearUserData();
-      setProfile({
+      const fresh: UserProfile = {
         ...defaultProfile,
         currency: getDefaultCurrency(),
-      });
+      };
+      setProfile(fresh);
+      localStorage.removeItem('finsta_user_profile');
+      localStorage.removeItem('finsta_last_session_id');
     } catch (e) {
       console.error('Failed to clear data:', e);
+      throw e;
     }
   };
 

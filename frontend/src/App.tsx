@@ -12,7 +12,13 @@ export const AppContent: React.FC = () => {
   const [isCalculatorsOpen, setIsCalculatorsOpen] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('finsta_last_session_id');
+    } catch {
+      return null;
+    }
+  });
   const [pendingPrompt, setPendingPrompt] = useState<string | undefined>(undefined);
   const [triggerNewChat, setTriggerNewChat] = useState<boolean>(false);
 

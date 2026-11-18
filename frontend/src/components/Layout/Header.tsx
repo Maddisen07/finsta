@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sparkles, Moon, Sun, Calculator, User, Download, PlusCircle } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { useProfile } from '../../context/ProfileContext';
 import { CURRENCIES, CurrencyCode } from '../../types';
+import { api } from '../../services/api';
 
 interface HeaderProps {
   onOpenCalculators: () => void;
@@ -19,6 +20,21 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const { theme, toggleTheme } = useTheme();
   const { profile, setCurrency } = useProfile();
+  const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    const check = async () => {
+      const ok = await api.checkHealth();
+      if (isMounted) setIsBackendHealthy(ok);
+    };
+    check();
+    const interval = setInterval(check, 10000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-30 bg-primary text-cream shadow-sm transition-colors">
@@ -37,6 +53,24 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-accent text-[#24221F]">
                 Sidekick
               </span>
+              {/* Backend status dot */}
+              <div
+                className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cream/10 border border-cream/20 text-[10px]"
+                title={isBackendHealthy ? "Backend server running & healthy" : "Can't reach backend server on http://localhost:8000"}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isBackendHealthy === null
+                      ? 'bg-cream/40'
+                      : isBackendHealthy
+                      ? 'bg-emerald-400 animate-pulse'
+                      : 'bg-amber-400'
+                  }`}
+                />
+                <span className="text-cream/90 font-medium hidden sm:inline">
+                  {isBackendHealthy === null ? 'Checking...' : isBackendHealthy ? 'Online' : 'Offline'}
+                </span>
+              </div>
             </div>
             <p className="text-xs text-cream/80 font-normal hidden sm:block">
               Your smart money sidekick
@@ -56,15 +90,19 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden sm:inline">New Chat</span>
           </button>
 
-          {/* Currency Switcher */}
+          {/* Currency Switcher - Styled with Theme */}
           <select
             value={profile.currency}
             onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-            className="text-xs font-semibold bg-cream/15 text-cream border border-cream/25 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-accent transition cursor-pointer"
+            className="text-xs font-bold bg-[#163B2D] text-[#FAF8F5] border border-[#5B8A74] rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-accent transition cursor-pointer shadow-sm"
             title="Select currency"
           >
             {Object.values(CURRENCIES).map((c) => (
-              <option key={c.code} value={c.code} className="bg-surface text-text">
+              <option
+                key={c.code}
+                value={c.code}
+                className="bg-[#FAF8F5] text-[#24221F] font-semibold"
+              >
                 {c.symbol} {c.code}
               </option>
             ))}

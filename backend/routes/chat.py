@@ -95,6 +95,25 @@ def delete_session(session_id: str, db: Session = Depends(get_db)):
     return {"message": f"Session {session_id} deleted"}
 
 
+class RenameSessionRequest(BaseModel):
+    title: str
+
+
+@router.patch("/sessions/{session_id}")
+@router.put("/sessions/{session_id}")
+def rename_session(session_id: str, rename_req: RenameSessionRequest, db: Session = Depends(get_db)):
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    new_title = rename_req.title.strip()
+    if not new_title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    session.title = new_title[:100]
+    session.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"id": session.id, "title": session.title, "message": "Session renamed successfully"}
+
+
 @router.post("")
 async def chat_endpoint(chat_req: ChatRequest, req: Request, db: Session = Depends(get_db)):
     # 1. Rate limiting check

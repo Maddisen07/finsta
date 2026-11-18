@@ -13,24 +13,57 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
 
   const [formData, setFormData] = useState<UserProfile>(profile);
   const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setFormData(profile);
+      setIsSaved(false);
+      setErrorMsg(null);
+      setShowClearConfirm(false);
+    }
+  }, [isOpen, profile]);
 
   if (!isOpen) return null;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    await updateProfile(formData);
-    setIsSaved(true);
-    setTimeout(() => {
-      setIsSaved(false);
-      onClose();
-    }, 900);
+    setErrorMsg(null);
+
+    if (formData.monthly_income < 0) {
+      setErrorMsg('Monthly income cannot be negative.');
+      return;
+    }
+    if (formData.monthly_expenses < 0) {
+      setErrorMsg('Monthly expenses cannot be negative.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      await updateProfile(formData);
+      setIsSaved(true);
+      setTimeout(() => {
+        setIsSaved(false);
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to save profile preferences.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleClear = async () => {
-    await clearAllData();
-    setShowClearConfirm(false);
-    onClose();
+    try {
+      await clearAllData();
+      setShowClearConfirm(false);
+      onClose();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to clear user data.');
+    }
   };
 
   return (
@@ -63,6 +96,19 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
         {/* Form Body */}
         <form onSubmit={handleSave} className="p-6 space-y-4 bg-background">
           
+          {errorMsg && (
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs font-semibold text-accent">
+              {errorMsg}
+            </div>
+          )}
+
+          {isSaved && (
+            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs font-semibold text-primary flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-600" />
+              <span>Profile preferences saved successfully to database!</span>
+            </div>
+          )}
+
           {/* Currency */}
           <div>
             <label className="text-xs font-semibold text-text-muted block mb-1">
@@ -141,12 +187,15 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose }) =
           <div className="pt-2">
             <button
               type="submit"
-              className="w-full py-2.5 px-4 rounded-xl bg-accent hover:bg-[#C26325] text-[#24221F] font-bold text-xs shadow-warm transition flex items-center justify-center gap-1.5"
+              disabled={isSaving}
+              className="w-full py-2.5 px-4 rounded-xl bg-accent hover:bg-[#C26325] disabled:opacity-50 text-[#24221F] font-bold text-xs shadow-warm transition flex items-center justify-center gap-1.5"
             >
               {isSaved ? (
                 <>
                   <Check className="w-4 h-4" /> Profile Saved!
                 </>
+              ) : isSaving ? (
+                'Saving...'
               ) : (
                 'Save Profile Preferences'
               )}

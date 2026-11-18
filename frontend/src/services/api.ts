@@ -1,10 +1,7 @@
 import { UserProfile, ChatSession, Message, ToolCallExecution } from '../types';
 
-export const API_BASE = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api`
-  : typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
-  ? 'https://finsta-drrl.onrender.com/api'
-  : 'http://localhost:8000/api';
+const rawBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const API_BASE = `${rawBase.replace(/\/$/, '')}/api`;
 
 export const api = {
   // Chat Streaming via SSE
@@ -152,6 +149,30 @@ export const api = {
 
   async deleteSession(id: string): Promise<void> {
     await fetch(`${API_BASE}/chat/sessions/${id}`, { method: 'DELETE' });
+  },
+
+  async renameSession(id: string, title: string): Promise<{ id: string; title: string }> {
+    const res = await fetch(`${API_BASE}/chat/sessions/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) throw new Error('Failed to rename session');
+    return res.json();
+  },
+
+  async checkHealth(): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_BASE}/health`);
+      return res.ok;
+    } catch {
+      try {
+        const rootRes = await fetch(API_BASE.replace(/\/api$/, '') + '/health');
+        return rootRes.ok;
+      } catch {
+        return false;
+      }
+    }
   },
 
   // Summarize

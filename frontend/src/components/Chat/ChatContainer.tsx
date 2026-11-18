@@ -6,7 +6,7 @@ import { StarterQuestions } from './StarterQuestions';
 import { ChatInput } from './ChatInput';
 import { useProfile } from '../../context/ProfileContext';
 import { api } from '../../services/api';
-import { History, Plus, Trash2, Sparkles, MessageSquare } from 'lucide-react';
+import { History, Plus, Trash2, Sparkles, MessageSquare, Edit2, Check, X } from 'lucide-react';
 
 interface ChatContainerProps {
   initialPrompt?: string;
@@ -33,6 +33,10 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
 
+  // Rename session inline state
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState<string>('');
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -45,25 +49,62 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     scrollToBottom();
   }, [messages, isStreaming]);
 
-  // Load Sessions
+  // Load Sessions list
   const loadSessions = async () => {
     try {
       const data = await api.getSessions();
-      setSessions(data);
+      setSessions(data || []);
+      return data || [];
     } catch (e) {
       console.warn('Could not load sessions:', e);
+      return [];
     }
   };
 
+  // Restore last conversation after a page refresh
   useEffect(() => {
-    loadSessions();
-  }, [activeSessionId]);
+    const restoreConversation = async () => {
+      const allSessions = await loadSessions();
+      const savedSessionId = localStorage.getItem('finsta_last_session_id') || activeSessionId;
+
+      if (savedSessionId) {
+        try {
+          const sess = await api.getSession(savedSessionId);
+          if (sess && sess.id) {
+            setActiveSessionId(sess.id);
+            setMessages(sess.messages || []);
+            return;
+          }
+        } catch (e) {
+          console.warn('Saved session not found on server:', savedSessionId);
+        }
+      }
+
+      // If no valid saved session, load the most recent session if available
+      if (allSessions && allSessions.length > 0) {
+        try {
+          const mostRecent = allSessions[0];
+          const sess = await api.getSession(mostRecent.id);
+          if (sess && sess.id) {
+            setActiveSessionId(sess.id);
+            setMessages(sess.messages || []);
+            localStorage.setItem('finsta_last_session_id', sess.id);
+          }
+        } catch (e) {
+          console.warn('Could not load most recent session:', e);
+        }
+      }
+    };
+
+    restoreConversation();
+  }, []);
 
   // Switch session
   const selectSession = async (sessionId: string) => {
     try {
       const sess = await api.getSession(sessionId);
       setActiveSessionId(sess.id);
+      localStorage.setItem('finsta_last_session_id', sess.id);
       setMessages(sess.messages || []);
       setIsHistoryOpen(false);
     } catch (e) {
@@ -77,8 +118,10 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
       abortControllerRef.current.abort();
     }
     setActiveSessionId(null);
+    localStorage.removeItem('finsta_last_session_id');
     setMessages([]);
     setIsStreaming(false);
+    setIsHistoryOpen(false);
   };
 
   useEffect(() => {
@@ -96,9 +139,47 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     }
   }, [initialPrompt]);
 
+  // Start Rename inline
+  const startRenaming = (session: ChatSession, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title || 'New Conversation');
+  };
+
+  // Save Rename inline
+  const saveRename = async (sessionId: string, e: React.MouseEvent | React.FormEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!editingTitle.trim()) return;
+
+    try {
+      await api.renameSession(sessionId, editingTitle.trim());
+      setSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, title: editingTitle.trim() } : s))
+      );
+      setEditingSessionId(null);
+    } catch (err) {
+      console.error('Failed to rename session:', err);
+    }
+  };
+
+  // Delete session
+  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await api.deleteSession(sessionId);
+      if (activeSessionId === sessionId) {
+        startNewChat();
+      }
+      loadSessions();
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
+  };
+
   // Send Message
   const handleSendMessage = async (text: string) => {
-    if (isStreaming) return;
+    if (isStreaming || !text.trim()) return;
 
     const userMessage: Message = {
       sender: 'user',
@@ -119,6 +200,9 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     let piiWarnings: string[] = [];
     let followUps: string[] = [];
 
+    // Capture mutable reference to session ID so first message reliably saves
+    let currentSessionId = activeSessionId;
+
     const assistantMessageIndex = messages.length + 1;
 
     setMessages((prev) => [
@@ -132,14 +216,14 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
     await api.streamChat({
       message: text,
-      sessionId: activeSessionId || undefined,
+      sessionId: currentSessionId || undefined,
       currency: profile.currency,
       userProfile: profile,
       signal: abortController.signal,
       onSessionCreated: (id) => {
-        if (!activeSessionId) {
-          setActiveSessionId(id);
-        }
+        currentSessionId = id;
+        setActiveSessionId(id);
+        localStorage.setItem('finsta_last_session_id', id);
       },
       onPiiWarning: (warns) => {
         piiWarnings = warns;
@@ -194,11 +278,11 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         });
         setIsStreaming(false);
 
-        // Persist turn to SQLite
-        if (activeSessionId) {
+        // Persist turn to SQLite database
+        if (currentSessionId) {
           try {
             await api.saveChatTurn({
-              session_id: activeSessionId,
+              session_id: currentSessionId,
               user_message: text,
               assistant_message: assistantText,
               intent: currentIntent,
@@ -207,18 +291,14 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             });
             loadSessions();
           } catch (e) {
-            console.error('Failed to save turn to backend:', e);
+            console.error('Failed to save turn to backend SQLite:', e);
           }
         }
       },
       onError: (err) => {
         console.error('Streaming failed:', err);
         setIsStreaming(false);
-        const errStr = String(err?.message || err || '');
-        let fallbackMsg = 'Sorry, I encountered an issue connecting to the financial engine. Please check your network and try again.';
-        if (errStr.includes('Failed to fetch') || errStr.includes('NetworkError') || errStr.includes('Load failed')) {
-          fallbackMsg = '⚠️ **Backend Connection Issue**: Could not connect to the FinSta API server. If deployed on Vercel, please check that your backend service on Render/Railway is running and configured under `VITE_API_URL`, or that the Vercel API function is deployed.';
-        }
+        const fallbackMsg = "Can't reach the FinSta server. Make sure the backend is running on http://localhost:8000";
         setMessages((prev) => {
           const updated = [...prev];
           if (updated[assistantMessageIndex]) {
@@ -239,9 +319,9 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
   // Summarize chat
   const handleSummarize = async () => {
-    if (!activeSessionId || messages.length === 0 || isSummarizing) return;
-    setIsSummarizing(true);
+    if (!activeSessionId || isSummarizing || messages.length < 2) return;
     try {
+      setIsSummarizing(true);
       const res = await api.summarizeSession(activeSessionId);
       if (res && res.summary) {
         setMessages((prev) => [
@@ -261,19 +341,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
     }
   };
 
-  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    try {
-      await api.deleteSession(sessionId);
-      if (activeSessionId === sessionId) {
-        startNewChat();
-      }
-      loadSessions();
-    } catch (err) {
-      console.error('Failed to delete session:', err);
-    }
-  };
-
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-4rem-2.5rem)] relative overflow-hidden bg-background">
       
@@ -283,7 +350,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
         {/* History drawer toggle */}
         <button
           onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-          className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-text hover:bg-surface border border-border transition"
+          className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg text-text hover:bg-surface border border-border transition shadow-sm"
         >
           <History className="w-3.5 h-3.5 text-primary" />
           <span>Conversations ({sessions.length})</span>
@@ -305,14 +372,14 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
       {/* History Sidebar Drawer */}
       {isHistoryOpen && (
-        <div className="absolute inset-y-0 left-0 w-72 bg-surface border-r border-border z-20 shadow-warm flex flex-col animate-in slide-in-from-left duration-200">
+        <div className="absolute inset-y-0 left-0 w-80 bg-surface border-r border-border z-20 shadow-warm flex flex-col animate-in slide-in-from-left duration-200">
           <div className="p-4 border-b border-border flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-text-muted">
               Chat History
             </span>
             <button
               onClick={() => setIsHistoryOpen(false)}
-              className="text-xs text-text-muted hover:text-text"
+              className="text-xs text-text-muted hover:text-text font-semibold p-1"
             >
               Close
             </button>
@@ -324,7 +391,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
                 startNewChat();
                 setIsHistoryOpen(false);
               }}
-              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-accent text-[#24221F] text-xs font-bold shadow-warm hover:bg-[#C26325] transition"
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-accent text-[#24221F] text-xs font-bold shadow-warm hover:bg-[#C26325] transition"
             >
               <Plus className="w-4 h-4 stroke-[2.5]" /> New Conversation
             </button>
@@ -332,7 +399,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
 
           <div className="flex-1 overflow-y-auto px-3 space-y-1">
             {sessions.length === 0 ? (
-              <p className="text-xs text-text-muted p-3 text-center">No past chats yet.</p>
+              <p className="text-xs text-text-muted p-4 text-center">No past chats yet.</p>
             ) : (
               sessions.map((s) => (
                 <div
@@ -340,21 +407,63 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
                   onClick={() => selectSession(s.id)}
                   className={`group flex items-center justify-between p-2.5 rounded-lg text-xs cursor-pointer transition ${
                     activeSessionId === s.id
-                      ? 'bg-background text-primary font-bold border border-border'
+                      ? 'bg-background text-primary font-bold border border-border shadow-sm'
                       : 'text-text hover:bg-background'
                   }`}
                 >
-                  <div className="flex items-center gap-2 overflow-hidden">
-                    <MessageSquare className="w-3.5 h-3.5 shrink-0 text-text-muted" />
-                    <span className="truncate">{s.title || 'New Conversation'}</span>
+                  <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0 mr-2">
+                    <MessageSquare className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    {editingSessionId === s.id ? (
+                      <div className="flex items-center gap-1 flex-1" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && saveRename(s.id, e)}
+                          autoFocus
+                          className="w-full text-xs font-semibold px-1.5 py-0.5 rounded border border-accent bg-background text-text outline-none"
+                        />
+                        <button
+                          onClick={(e) => saveRename(s.id, e)}
+                          className="p-1 hover:text-primary transition"
+                          title="Save title"
+                        >
+                          <Check className="w-3.5 h-3.5 text-primary" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingSessionId(null);
+                          }}
+                          className="p-1 hover:text-accent transition"
+                          title="Cancel"
+                        >
+                          <X className="w-3.5 h-3.5 text-text-muted" />
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="truncate">{s.title || 'New Conversation'}</span>
+                    )}
                   </div>
-                  <button
-                    onClick={(e) => handleDeleteSession(s.id, e)}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-text-muted hover:text-accent transition"
-                    title="Delete session"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+
+                  {editingSessionId !== s.id && (
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                      <button
+                        onClick={(e) => startRenaming(s, e)}
+                        className="p-1 text-text-muted hover:text-primary transition rounded"
+                        title="Rename conversation"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteSession(s.id, e)}
+                        className="p-1 text-text-muted hover:text-accent transition rounded"
+                        title="Delete conversation"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
