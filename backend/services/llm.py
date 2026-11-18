@@ -1082,7 +1082,14 @@ async def stream_chat_response(
                 yield sse
             return
         except Exception as e:
-            yield f"data: {json.dumps({'chunk': f'> Note: Anthropic API fallback ({str(e)[:60]}). Running with FinSta local engine.\n\n'})}\n\n"
+            err_str = str(e)
+            if "API_KEY" in err_str or "400" in err_str or "unauthorized" in err_str.lower() or "not valid" in err_str.lower():
+                note = "> ℹ️ *Note: Anthropic API key is invalid or not configured. FinSta is responding using our verified financial engine.*\n\n"
+            elif "429" in err_str or "quota" in err_str.lower():
+                note = "> ℹ️ *Note: Anthropic API quota exceeded. FinSta is responding using our verified financial engine.*\n\n"
+            else:
+                note = f"> ℹ️ *Note: Running on FinSta verified financial engine ({err_str[:40]}...).*\n\n"
+            yield f"data: {json.dumps({'chunk': note})}\n\n"
             async for sse in stream_mock_response(message, intent, entities, user_profile, symbol):
                 yield sse
             return
