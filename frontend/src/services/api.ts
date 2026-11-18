@@ -1,7 +1,35 @@
 import { UserProfile, ChatSession, Message, ToolCallExecution } from '../types';
+import {
+  calculateEmiLocal,
+  calculateSipLocal,
+  calculateBudgetLocal,
+  calculateSavingsGoalLocal,
+  calculateDebtPayoffLocal,
+  calculateEmergencyFundLocal,
+} from '../utils/localCalculators';
 
-const rawBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-export const API_BASE = `${rawBase.replace(/\/$/, '')}/api`;
+// Smart API base resolution:
+// 1. If VITE_API_URL is configured (e.g. in Vercel environment variables), use it.
+// 2. If running on a deployed domain (e.g. *.vercel.app), default to the live Render backend.
+// 3. Otherwise (localhost / 127.0.0.1 development), default to http://localhost:8000.
+export const getApiBase = (): string => {
+  const custom = import.meta.env.VITE_API_URL;
+  if (custom && custom.trim() !== '') {
+    const trimmed = custom.trim().replace(/\/$/, '');
+    return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+  }
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    return 'https://finsta-drrl.onrender.com/api';
+  }
+  return 'http://localhost:8000/api';
+};
+
+export const API_BASE = getApiBase();
 
 export const api = {
   // Chat Streaming via SSE
@@ -99,24 +127,23 @@ export const api = {
                   tool_result: data.tool_result,
                 });
               }
-              // 5. Completion
-              if (data.done && onDone) {
-                onDone(data.follow_ups);
+              // 5. Done event
+              if (data.done) {
+                if (onDone) onDone(data.suggested_follow_ups);
               }
-            } catch (err) {
-              console.error('Failed to parse SSE JSON chunk:', jsonStr, err);
+            } catch (e) {
+              console.error('Error parsing SSE event chunk:', e, jsonStr);
             }
           }
         }
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
       if (onError) onError(err);
-      else console.error('Chat stream error:', err);
+      else throw err;
     }
   },
 
-  // Save Turn
+  // Save chat turn
   async saveChatTurn(turnData: {
     session_id: string;
     user_message: string;
@@ -126,19 +153,29 @@ export const api = {
     tool_calls?: any[];
     chart_data?: any;
   }) {
-    const res = await fetch(`${API_BASE}/chat/save-turn`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(turnData),
-    });
-    return res.json();
+    try {
+      const res = await fetch(`${API_BASE}/chat/save-turn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(turnData),
+      });
+      return await res.json();
+    } catch (e) {
+      console.warn('Could not save turn to remote backend:', e);
+      return null;
+    }
   },
 
   // Sessions CRUD
   async getSessions(): Promise<ChatSession[]> {
-    const res = await fetch(`${API_BASE}/chat/sessions`);
-    if (!res.ok) return [];
-    return res.json();
+    try {
+      const res = await fetch(`${API_BASE}/chat/sessions`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch (e) {
+      console.warn('Could not fetch sessions from remote backend:', e);
+      return [];
+    }
   },
 
   async getSession(id: string): Promise<ChatSession> {
@@ -148,7 +185,11 @@ export const api = {
   },
 
   async deleteSession(id: string): Promise<void> {
-    await fetch(`${API_BASE}/chat/sessions/${id}`, { method: 'DELETE' });
+    try {
+      await fetch(`${API_BASE}/chat/sessions/${id}`, { method: 'DELETE' });
+    } catch (e) {
+      console.warn('Could not delete session on backend:', e);
+    }
   },
 
   async renameSession(id: string, title: string): Promise<{ id: string; title: string }> {
@@ -163,15 +204,22 @@ export const api = {
 
   async checkHealth(): Promise<boolean> {
     try {
-      const res = await fetch(`${API_BASE}/health`);
-      return res.ok;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(`${API_BASE}/health`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (res.ok) return true;
+    } catch {}
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const rootBase = API_BASE.replace(/\/api$/, '');
+      const rootRes = await fetch(`${rootBase}/health`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      return rootRes.ok;
     } catch {
-      try {
-        const rootRes = await fetch(API_BASE.replace(/\/api$/, '') + '/health');
-        return rootRes.ok;
-      } catch {
-        return false;
-      }
+      return false;
     }
   },
 
@@ -209,58 +257,143 @@ export const api = {
     return res.json();
   },
 
-  // Direct Calculators API
+  // Direct Calculators API with robust local mathematical fallback
   async calculateEmi(data: { principal: number; annual_rate: number; tenure_months: number }) {
-    const res = await fetch(`${API_BASE}/calculators/emi`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return res.json();
+    try {
+      const res = await fetch(`${API_BASE}/calculators/emi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend EMI calculation failed, falling back to local calculation engine:', e);
+    }
+    return calculateEmiLocal(data.principal, data.annual_rate, data.tenure_months);
   },
 
-  async calculateSip(data: { monthly_investment: number; annual_return_rate: number; tenure_years: number; initial_lump_sum?: number }) {
-    const res = await fetch(`${API_BASE}/calculators/sip`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return res.json();
+  async calculateSip(data: {
+    monthly_investment: number;
+    annual_return_rate: number;
+    tenure_years: number;
+    initial_lump_sum?: number;
+  }) {
+    try {
+      const res = await fetch(`${API_BASE}/calculators/sip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend SIP calculation failed, falling back to local calculation engine:', e);
+    }
+    return calculateSipLocal(
+      data.monthly_investment,
+      data.annual_return_rate,
+      data.tenure_years,
+      data.initial_lump_sum || 0
+    );
   },
 
-  async calculateSavingsGoal(data: { target_amount: number; timeline_months: number; current_savings?: number; annual_interest_rate?: number }) {
-    const res = await fetch(`${API_BASE}/calculators/savings-goal`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return res.json();
+  async calculateSavingsGoal(data: {
+    target_amount: number;
+    timeline_months: number;
+    current_savings?: number;
+    annual_interest_rate?: number;
+  }) {
+    try {
+      const res = await fetch(`${API_BASE}/calculators/savings-goal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend savings goal calculation failed, falling back to local calculation engine:', e);
+    }
+    return calculateSavingsGoalLocal(
+      data.target_amount,
+      data.timeline_months,
+      data.current_savings || 0,
+      data.annual_interest_rate || 0
+    );
   },
 
-  async calculateBudget(data: { monthly_income: number; needs_pct?: number; wants_pct?: number; savings_pct?: number }) {
-    const res = await fetch(`${API_BASE}/calculators/budget`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return res.json();
+  async calculateBudget(data: {
+    monthly_income: number;
+    needs_pct?: number;
+    wants_pct?: number;
+    savings_pct?: number;
+  }) {
+    try {
+      const res = await fetch(`${API_BASE}/calculators/budget`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend budget calculation failed, falling back to local calculation engine:', e);
+    }
+    return calculateBudgetLocal(
+      data.monthly_income,
+      data.needs_pct ?? 50,
+      data.wants_pct ?? 30,
+      data.savings_pct ?? 20
+    );
   },
 
-  async calculateDebtPayoff(data: { debts: Array<{ name: string; balance: number; interest_rate: number; min_payment: number }>; extra_monthly_payment?: number }) {
-    const res = await fetch(`${API_BASE}/calculators/debt-payoff`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return res.json();
+  async calculateDebtPayoff(data: {
+    debts: Array<{ name: string; balance: number; interest_rate: number; min_payment: number }>;
+    extra_monthly_payment?: number;
+  }) {
+    try {
+      const res = await fetch(`${API_BASE}/calculators/debt-payoff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend debt payoff calculation failed, falling back to local calculation engine:', e);
+    }
+    return calculateDebtPayoffLocal(data.debts, data.extra_monthly_payment || 0);
   },
 
-  async calculateEmergencyFund(data: { monthly_essential_expenses: number; months_target?: number; current_savings?: number; monthly_savings_capacity?: number }) {
-    const res = await fetch(`${API_BASE}/calculators/emergency-fund`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    return res.json();
+  async calculateEmergencyFund(data: {
+    monthly_essential_expenses: number;
+    months_target?: number;
+    current_savings?: number;
+    monthly_savings_capacity?: number;
+  }) {
+    try {
+      const res = await fetch(`${API_BASE}/calculators/emergency-fund`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Backend emergency fund calculation failed, falling back to local calculation engine:', e);
+    }
+    return calculateEmergencyFundLocal(
+      data.monthly_essential_expenses,
+      data.months_target || 6,
+      data.current_savings || 0,
+      data.monthly_savings_capacity || 0
+    );
   },
 };

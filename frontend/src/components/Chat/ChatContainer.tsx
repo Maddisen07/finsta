@@ -298,7 +298,10 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
       onError: (err) => {
         console.error('Streaming failed:', err);
         setIsStreaming(false);
-        const fallbackMsg = "Can't reach the FinSta server. Make sure the backend is running on http://localhost:8000";
+        const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+        const fallbackMsg = isLocal
+          ? "Can't reach the FinSta server. Make sure the backend is running on http://localhost:8000"
+          : "Can't reach the FinSta server. If running on Render free tier, the backend might be spinning up from sleep (~30-50s). Please retry in a moment.";
         setMessages((prev) => {
           const updated = [...prev];
           if (updated[assistantMessageIndex]) {

@@ -56,7 +56,11 @@ export const Header: React.FC<HeaderProps> = ({
               {/* Backend status dot */}
               <div
                 className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cream/10 border border-cream/20 text-[10px]"
-                title={isBackendHealthy ? "Backend server running & healthy" : "Can't reach backend server on http://localhost:8000"}
+                title={
+                  isBackendHealthy
+                    ? "Backend server connected & healthy"
+                    : "Connecting to FinSta backend (if waking from sleep on Render, may take ~30-50s)"
+                }
               >
                 <span
                   className={`w-2 h-2 rounded-full ${
