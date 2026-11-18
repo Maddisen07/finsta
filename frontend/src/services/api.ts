@@ -3,7 +3,7 @@ import { UserProfile, ChatSession, Message, ToolCallExecution } from '../types';
 export const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api`
   : typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1'
-  ? '/api'
+  ? 'https://finsta-drrl.onrender.com/api'
   : 'http://localhost:8000/api';
 
 export const api = {

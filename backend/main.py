@@ -29,21 +29,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS configuration
-cors_origins_str = os.getenv("CORS_ORIGINS", "")
-origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
-
-default_origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-]
-
+# CORS configuration - Allow all origins cleanly for seamless Vercel <-> Render communication
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins if origins else default_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -107,6 +97,27 @@ def root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/api/health/llm")
+def llm_health_check():
+    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
+    model = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+
+    gemini_configured = bool(gemini_key and gemini_key != "mock" and not gemini_key.startswith("your_"))
+    anthropic_configured = bool(anthropic_key and anthropic_key != "mock" and not anthropic_key.startswith("your_"))
+
+    return {
+        "status": "healthy",
+        "provider": provider,
+        "model": model,
+        "gemini_api_key_configured": gemini_configured,
+        "anthropic_api_key_configured": anthropic_configured,
+        "active_engine": "Gemini Live API" if (provider == "gemini" and gemini_configured) else ("Anthropic Claude API" if (provider == "anthropic" and anthropic_configured) else "FinSta Built-in Financial Coaching Engine"),
+        "note": "When API keys are not provided, FinSta seamlessly runs on its verified local financial math & three-tier advisory engine."
+    }
 
 
 if __name__ == "__main__":
